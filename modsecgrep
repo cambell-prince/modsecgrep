@@ -5,20 +5,27 @@ use strict;
 use warnings;
 use Getopt::Std;
 use vars qw/ %opt /;
-my $options = 'haf:s:';
-my $defaultlog = '/usr/local/apache/logs/modsec_audit.log';
+my $options = 'hanf:s:';
+my $defaultlog = '/var/log/apache2/modsec_audit.log';
 getopts( "$options", \%opt ) or &help();
 &help() if ($opt{h} or !%opt);
 my $sstr;
 my $count=0;
 my %rules;
  
-if ($opt{f}) {
-    open(LOGFILE,'<',$opt{f}) || die "cant find $opt{f} file $!\n";
+
+my $file;
+
+if (-t STDIN) {
+    if ($opt{f}) {
+        open($file,'<',$opt{f}) || die "cant find $opt{f} file $!\n";
+    } else {
+        open($file,'<',$defaultlog) || die "cant find $defaultlog file $!\n";
+    }
 } else {
-    open(LOGFILE,'<',$defaultlog) || die "cant find $defaultlog file $!\n";
+    $file = *STDIN;
 }
- 
+
 if ($opt{s}) {
     $sstr = $opt{s};
 } else {
@@ -28,20 +35,26 @@ if ($opt{s}) {
 # Slurp up to the end of the next Z Section
 $/ = "-Z--\n"; 
  
-while(my $chunk = <LOGFILE>) {
+while(my $chunk = <$file>) {
     chomp $chunk;
-    if (($chunk =~ m/ Intercepted/ || $opt{a}) && $chunk =~ m/$sstr/) {
-        $count++;
-        # If you use a ruleset other than Atomic's then you can change the regex below to grab the rule's ID number and descriptive text
-        if ($chunk =~ m/\[id "([\d]+)"\].+WAF Rules([^"\]]{1,100})/) {    
-            $rules{$1}{count}++;
-            $rules{$1}{msg} = $rules{$1}{msg} ? $rules{$1}{msg} : $2;
+    if (($chunk =~ m/ Intercepted/ || $opt{a})) {
+        if (($opt{n} && $chunk !~ m/$sstr/) || (!$opt{n} && $chunk =~ m/$sstr/)) {
+            $count++;
+            # If you use a ruleset other than Atomic's then you can change the regex below to grab the rule's ID number and descriptive text
+            if ($chunk =~ m/\[id "([\d]+)"\].+WAF Rules([^"\]]{1,100})/) {    
+                $rules{$1}{count}++;
+                $rules{$1}{msg} = $rules{$1}{msg} ? $rules{$1}{msg} : $2;
+            }
+            if ($opt{n}) {
+                print "####################\nNo entry found for search String ($sstr)\n####################\n";
+            } else {
+                print "####################\nEntry found for search String ($sstr)\n####################\n";
+            }
+            print $chunk,"-Z--\n\n";
         }
-        print "####################\nEntry found for search String ($sstr)\n####################\n";
-        print $chunk,"-Z--\n\n";
     }
 }
-close (LOGFILE);
+close ($file);
  
 print "\n\nTotal Matches for $sstr : $count\n";
 foreach my $rule (keys %rules) {
@@ -57,10 +70,10 @@ $0 [-h] [-a] [-f file] [-s search]
  
     default   : same as -h
     -h        : this help message
+    -n        : negate the search string
     -a        : show all activity (defaults to Interceptions only)
     -f file   : file to search (defaults to /usr/local/apache/logs/modsec_audit.log)
     -s search : string to match on - enclosed in quotes if it contains spaces
 EOF
     exit;
 }
-
